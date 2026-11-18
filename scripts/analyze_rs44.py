@@ -164,14 +164,102 @@ def analyze(folder, prediction_file):
         extent=((frequency[0]-BEACON)/1000, (frequency[-1]-BEACON)/1000, elapsed[0] - .5, elapsed[-1] + .5),
         vmin=float(np.percentile(db, 15)), vmax=float(np.percentile(db, 99)))
     waterfall.plot((fitted-BEACON)/1000, elapsed, color="cyan", linewidth=.8, label="Predicted Doppler + fitted offset")
-    waterfall.set(xlabel="Offset from 435.605 MHz (kHz)", ylabel="Elapsed time (s)", title="RS-44 CW candidate; satellite identity unverified")
+    waterfall.set(xlabel="Offset from 435.605 MHz (kHz)", ylabel="Seconds since recording start", title="RS-44 CW candidate; satellite identity unverified")
     waterfall.legend(loc="upper right", fontsize=8)
     fig.colorbar(image, ax=waterfall, label="PSD (dBFS/Hz; uncalibrated)")
-    pulses.plot(np.arange(len(envelope)) / 100, envelope, linewidth=.6)
-    pulses.set(xlabel="Time in candidate audio (s)", ylabel="Envelope (ADC counts)", title="Inspect Morse timing independently of Doppler agreement")
+    pulses.plot(audio_start + np.arange(len(envelope)) / 100, envelope, linewidth=.6)
+    pulses.set(xlabel="Seconds since recording start", ylabel="Envelope (ADC counts)", title="CW audio envelope")
     fig.savefig(folder / "cw-analysis.png", dpi=160)
     plt.close(fig)
     (folder / "cw-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result, indent=2))
+
+
+def render_saved(folder, prediction_file, output, wide_spectrum, cw_audio, audio_start):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from scipy.signal import spectrogram
+
+    metadata = json.loads((folder / 'recording.json').read_text())
+    origin = datetime.fromisoformat(metadata['actual_start_utc']).timestamp()
+    prediction = json.loads(prediction_file.read_text())
+    knots = prediction['time_utc_unix']
+    doppler = prediction['doppler_hz']
+    with np.load(folder / 'cw-spectrum.npz') as recorded:
+        frequency = recorded['frequency_hz']
+        times = recorded['time_utc_unix']
+        psd = recorded['psd_dbfs_hz']
+    elapsed = times - origin
+    expected = BEACON + np.interp(times, knots, doppler)
+    result, peak, excess, fit = search_track(10 ** (psd / 10), frequency, expected)
+    good = excess >= 10
+
+    output.mkdir(parents=True)
+
+    def save(fig, name):
+        fig.savefig(output / name, dpi=150)
+        plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(12, 5), layout='constrained')
+    image = ax.pcolormesh(elapsed, (frequency - BEACON) / 1000, psd.T, shading='nearest',
+                         cmap='magma', vmin=np.percentile(psd, 15), vmax=np.percentile(psd, 99.5))
+    ax.plot(elapsed, (expected - BEACON) / 1000, ':', color='white', lw=.8, label='Predicted Doppler')
+    ax.plot(elapsed, (fit - BEACON) / 1000, color='cyan', lw=.8, label='Fitted Doppler')
+    ax.set(xlabel='Seconds since recording start', ylabel='Offset from 435.605 MHz (kHz)')
+    ax.legend()
+    fig.colorbar(image, ax=ax, label='PSD (dBFS/Hz)')
+    save(fig, '01-pass-waterfall.png')
+
+    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(12, 5.5), layout='constrained')
+    axes[0].plot(elapsed, (fit - BEACON) / 1000, lw=.8)
+    axes[0].scatter(elapsed[good], (peak[good] - BEACON) / 1000, s=10, color='#a05228')
+    axes[0].set_ylabel('Offset from 435.605 MHz (kHz)')
+    axes[1].scatter(elapsed[good], peak[good] - fit[good], s=12, color='#a05228')
+    axes[1].axhline(0, color='.4', lw=.8)
+    axes[1].set(xlabel='Seconds since recording start', ylabel='Residual (Hz)')
+    save(fig, '02-doppler-fit.png')
+
+    fs, audio = wavfile.read(cw_audio)
+    hz, second, power = spectrogram(audio.astype(float) / 32768, fs=fs, window='hann',
+                                    nperseg=1024, noverlap=896)
+    band = (hz >= 550) & (hz <= 750)
+    cw_band = (hz >= 600) & (hz <= 700)
+    db = 10 * np.log10(np.maximum(power[band], 1e-20))
+    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(12, 5.5), layout='constrained')
+    image = axes[0].pcolormesh(second + audio_start, hz[band], db, shading='nearest', cmap='magma',
+                              vmin=np.percentile(db, 15), vmax=np.percentile(db, 99))
+    axes[0].set_ylabel('Audio frequency (Hz)')
+    fig.colorbar(image, ax=axes[0], label='PSD (dBFS/Hz)')
+    envelope = np.sqrt(np.sum(power[cw_band], axis=0) * (hz[1] - hz[0]))
+    axes[1].plot(second + audio_start, envelope, lw=.65)
+    axes[1].set(xlabel='Seconds since recording start', ylabel='600–700 Hz envelope')
+    save(fig, '03-cw-morse.png')
+
+    offsets = np.arange(-400, 401, 12.5)
+    detail = np.vstack([np.interp(center + offsets, frequency, row) for center, row in zip(fit, psd)])
+    fig, ax = plt.subplots(figsize=(12, 4.5), layout='constrained')
+    image = ax.pcolormesh(elapsed, offsets, detail.T, shading='nearest', cmap='magma',
+                         vmin=np.percentile(detail, 15), vmax=np.percentile(detail, 99))
+    ax.scatter(elapsed[good], peak[good] - fit[good], s=8, color='cyan')
+    ax.set(xlabel='Seconds since recording start', ylabel='Offset from fitted Doppler (Hz)')
+    fig.colorbar(image, ax=ax, label='PSD (dBFS/Hz)')
+    save(fig, '04-beacon-detail.png')
+
+    with np.load(wide_spectrum) as spectrum:
+        wide_t, wide_hz, wide_psd = spectrum['time'], spectrum['freq'], spectrum['psd']
+    fig, ax = plt.subplots(figsize=(12, 5.5), layout='constrained')
+    image = ax.pcolormesh(wide_t - origin, wide_hz / 1e6, wide_psd.T, shading='nearest', cmap='magma',
+                         vmin=np.percentile(wide_psd, 15), vmax=np.percentile(wide_psd, 99.7))
+    correction = np.interp(wide_t, knots, doppler) + result['estimated_frequency_offset_hz']
+    ax.plot(wide_t - origin, (BEACON + correction) / 1e6, color='cyan', lw=.8, label='CW beacon')
+    ax.fill_between(wide_t - origin, (435610000 + correction) / 1e6, (435670000 + correction) / 1e6,
+                    color='cyan', alpha=.2, label='Transponder downlink')
+    ax.set(xlabel='Seconds since recording start', ylabel='Frequency (MHz)')
+    ax.legend()
+    fig.colorbar(image, ax=ax, label='PSD (dBFS/Hz)')
+    save(fig, '05-transponder-waterfall.png')
+
     print(json.dumps(result, indent=2))
 
 
@@ -179,5 +267,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--prediction", type=Path, required=True)
+    parser.add_argument("--output", type=Path, help="Render observation figures from saved spectra")
+    parser.add_argument("--wide-spectrum", type=Path)
+    parser.add_argument("--cw-audio", type=Path)
+    parser.add_argument("--audio-start", type=float, help="CW clip start in seconds after recording start")
     args = parser.parse_args()
-    analyze(args.folder, args.prediction)
+    if args.output is not None:
+        if args.wide_spectrum is None or args.cw_audio is None or args.audio_start is None:
+            parser.error("--output requires --wide-spectrum, --cw-audio and --audio-start")
+        render_saved(args.folder, args.prediction, args.output, args.wide_spectrum, args.cw_audio, args.audio_start)
+    else:
+        analyze(args.folder, args.prediction)

@@ -32,7 +32,7 @@ uv run --locked python scripts/decode_meteor.py path/to/recording
 
 `live-doppler/corrected.cf32`와 `recording.json`이 필요합니다. 기록 메타데이터의 `status`와 `live_doppler.status`는 `completed`여야 하고, `settings_restored`, `live_doppler.covers_all_recorded_samples`, `live_doppler.file_sizes_match`가 참이어야 합니다. `live_doppler`에는 `output_sample_rate_hz`, `output_samples_per_branch`, `fir_passband_hz`도 필요합니다. 기본 필터를 쓰려면 보존한 한쪽 통과 대역이 80 kHz보다 커야 합니다. `meteor-recovery/`가 이미 있으면 실행을 거부하므로 다시 분석할 때는 새 입력 사본을 사용합니다.
 
-잔여 반송파 보정과 채널 필터를 적용한 분기를 비교합니다. 심볼레이트가 미확정이면 72 ksym/s를 먼저 시도하고 유효 CADU가 0개일 때 80 ksym/s를 시도합니다. Reed-Solomon 검사를 통과한 CADU를 중복 제거해 `meteor-recovery/merged-rs-accepted.cadu`에 합칩니다. CADU가 검출되면 같은 심볼레이트의 SatDump 파이프라인으로 `merged-products/`에 후처리를 실행하며, 영상은 생성되지 않을 수 있습니다. 실행 오류가 없으면 유효 CADU가 0개여도 `completed`로 기록합니다. 분기별 결과와 수용된 CADU 수는 `meteor-recovery/comparison.json`에 기록됩니다.
+잔여 반송파 보정과 채널 필터를 적용한 분기를 비교합니다. 추정한 심볼레이트를 먼저 시도하고, 미확정이면 72 ksym/s를 먼저 시도합니다. 유효 CADU가 없으면 다른 심볼레이트도 시도합니다. Reed-Solomon 검사를 통과한 CADU를 중복 제거해 `meteor-recovery/merged-rs-accepted.cadu`에 합칩니다. CADU가 검출되면 같은 심볼레이트의 SatDump 파이프라인으로 `merged-products/`에 후처리를 실행하며, 영상은 생성되지 않을 수 있습니다. 실행 오류가 없으면 유효 CADU가 0개여도 `completed`로 기록합니다. 분기별 결과와 수용된 CADU 수는 `meteor-recovery/comparison.json`에 기록됩니다.
 
 ## 테스트
 

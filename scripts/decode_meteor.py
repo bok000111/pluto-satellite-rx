@@ -115,8 +115,9 @@ def recover(output, *, bandwidths_khz=(140, 130), binary='satdump'):
                  if any(abs(clock - nominal) <= nominal * 100e-6 for clock in clocks)]
     estimated_rate = supported[0] if len(supported) == 1 else None
     runs, merged = {}, {}
-    for wave, symbol_rate in enumerate((estimated_rate,) if estimated_rate else (72000, 80000)):
-        suffix = '-80k' if wave else ''
+    rates = (80000, 72000) if estimated_rate == 80000 else (72000, 80000)
+    for wave, symbol_rate in enumerate(rates):
+        suffix = f'-{symbol_rate // 1000}k' if wave else ''
         wave_branches = branches + [(branch['label'], Path(branch['path'])) for branch in segmented['branches']
                                     if branch['symbol_rate'] == symbol_rate]
         for label, source in wave_branches:

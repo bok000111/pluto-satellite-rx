@@ -12,7 +12,7 @@ from scipy.signal import freqz, resample_poly, upfirdn
 from analyze_live_doppler import analyze as analyze_doppler
 from analyze_rs44 import BEACON, analyze as analyze_rs44, extract_audio, search_track
 from channel_filter import channel_taps
-from decode_meteor import frames, recover
+from decode_meteor import frames, prepare_segments, recover
 from oqpsk_carrier import estimate_paired
 
 
@@ -188,8 +188,11 @@ class ProcessingTests(unittest.TestCase):
 
         before, at, after = [cadu(1, counter) for counter in (0xffffff, 0, 1)]
         other_before, other_after = [cadu(2, counter) for counter in (0xffffff, 0)]
-        for outcome in ('72k', '80k-product-timeout', 'zero'):
-            with self.subTest(outcome=outcome), TemporaryDirectory() as directory:
+        for outcome, estimated, rates in (
+                ('72k', None, [72000]), ('80k-product-timeout', None, [72000, 80000]),
+                ('zero', None, [72000, 80000]), ('80k', 72000, [72000, 80000]),
+                ('72k', 80000, [80000, 72000]), ('80k', 80000, [80000])):
+            with self.subTest(outcome=outcome, estimated=estimated), TemporaryDirectory() as directory:
                 root = Path(directory)
                 live = root / 'live-doppler'
                 live.mkdir()
@@ -209,7 +212,7 @@ class ProcessingTests(unittest.TestCase):
                             raise subprocess.TimeoutExpired(command, kwargs['timeout'])
                     else:
                         swap = command[command.index('--iq_swap') + 1] == 'true'
-                        accepted_pipeline = {'72k': 'meteor_m2-x_lrpt',
+                        accepted_pipeline = {'72k': 'meteor_m2-x_lrpt', '80k': 'meteor_m2-x_lrpt_80k',
                                              '80k-product-timeout': 'meteor_m2-x_lrpt_80k'}.get(outcome)
                         if pipeline == accepted_pipeline:
                             folder = Path(output)
@@ -218,17 +221,27 @@ class ProcessingTests(unittest.TestCase):
                                 before + at + other_after if swap else at + other_before + after)
                     return subprocess.CompletedProcess(command, 0)
 
-                with patch('decode_meteor.subprocess.run', side_effect=run):
+                def segments_with_clock(*args):
+                    result = prepare_segments(*args)
+                    if estimated is not None:
+                        result['segments'] = [{'symbol_clock_hz': estimated}]
+                    return result
+
+                with patch('decode_meteor.subprocess.run', side_effect=run), \
+                        patch('decode_meteor.prepare_segments', side_effect=segments_with_clock):
                     report = recover(root)
                     with self.assertRaisesRegex(FileExistsError, 'fresh recording copy'):
                         recover(root)
-                expected_rates = [72000, 72000] + ([80000, 80000] if outcome != '72k' else [])
+                expected_rates = [rate for rate in rates for _ in range(2)]
                 baseband = [call for call in calls if call[2] == 'baseband']
                 self.assertEqual([(call[1], call[call.index('--symbolrate') + 1],
                                    call[call.index('--iq_swap') + 1]) for call in baseband],
                                  [('meteor_m2-x_lrpt_80k' if rate == 80000 else 'meteor_m2-x_lrpt',
                                    str(rate), str(bool(iq % 2)).lower()) for iq, rate in enumerate(expected_rates)])
-                self.assertIsNone(report['estimated_symbol_rate'])
+                self.assertEqual(report['estimated_symbol_rate'], estimated)
+                self.assertEqual(list(report['runs']), [
+                    f'doppler-default{f"-{rate // 1000}k" if wave else ""}-iq{iq}'
+                    for wave, rate in enumerate(rates) for iq in (0, 1)])
                 self.assertIsNone(report['target'])
                 self.assertEqual(report['failed_runs'], [])
                 merged = Path(report['merged_cadu']).read_bytes()

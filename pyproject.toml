@@ -9,7 +9,11 @@ dependencies = [
     "numpy>=2,<3",
     "scipy>=1.14,<2",
     "matplotlib>=3.9,<4",
+    "sgp4",
 ]
+
+[project.optional-dependencies]
+receive = ["pyadi-iio>=0.0.20,<1", "pylibiio>=0.25,<0.27"]
 
 [tool.uv]
 package = false

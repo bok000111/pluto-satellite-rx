@@ -1,0 +1,9 @@
+/captures/
+/reports/
+/config/
+/.local/
+/.cache/
+/.deps/
+/.venv/
+/backups/
+__pycache__/

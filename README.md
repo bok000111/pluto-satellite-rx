@@ -2,6 +2,8 @@
 
 PlutoSDR로 받은 위성 IQ를 분석하는 Python 스크립트입니다. 저장된 신호를 이용해 도플러 보정 전후를 비교하고, RS-44 비콘의 CW 오디오를 추출하고, METEOR LRPT 신호를 후처리합니다. 실행에는 직접 준비한 녹음 파일을 사용합니다.
 
+[AO-123 수신 기록과 도플러 보정 그래프 (2026-11-18)](docs/observations/2026-11-18-ao123.md)
+
 ## 저장된 수신 결과 분석
 
 Python 3.13과 [uv](https://docs.astral.sh/uv/)가 필요합니다. `recording.json`, `iq.cs16`, `live-doppler/uncorrected.cf32`, `live-doppler/corrected.cf32`가 있는 녹음 폴더를 지정합니다. IQ 형식은 각각 little-endian int16 I/Q 쌍과 little-endian complex64입니다.

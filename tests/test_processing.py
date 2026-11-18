@@ -1,15 +1,19 @@
 import json
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import freqz, resample_poly, upfirdn
 
 from analyze_live_doppler import analyze as analyze_doppler
 from analyze_rs44 import BEACON, analyze as analyze_rs44, extract_audio, search_track
+from channel_filter import channel_taps
+from decode_meteor import frames, recover
+from oqpsk_carrier import estimate_paired
 
 
 plot_figures = []
@@ -139,3 +143,106 @@ class ProcessingTests(unittest.TestCase):
                 np.testing.assert_array_equal(centers, [1., 2.])
             np.testing.assert_array_equal(waterfall.images[0].get_extent()[2:], [.5, 2.5])
             np.testing.assert_array_equal(waterfall.lines[0].get_ydata(), centers)
+
+    def test_lrpt_filter_and_paired_carrier_against_known_frequencies(self):
+        taps = channel_taps(288000, 65000, 75000)
+        _, response = freqz(taps, worN=[55000, 90000], fs=288000)
+        self.assertAlmostEqual(abs(response[0]), 1, delta=1e-3)
+        self.assertLess(abs(response[1]), 1e-3)
+        rng = np.random.default_rng(2)
+        pulse = [.1, .4, .9, 1, .9, .4, .1]
+        for clock, offset in [(72000, -873), (80000, 631)]:
+            with self.subTest(clock=clock, offset=offset):
+                rate = 4 * clock
+                i = upfirdn(pulse, rng.choice([-1, 1], clock + 2), up=4)[8:rate + 8]
+                q = upfirdn(pulse, rng.choice([-1, 1], clock + 2), up=4)[6:rate + 6]
+                seconds = np.arange(rate) / rate
+                iq = (i + 1j * q) * np.exp(2j * np.pi * offset * seconds)
+                result = estimate_paired(iq, rate, 18000)
+                self.assertTrue(result['accepted'])
+                self.assertAlmostEqual(result['frequency_hz'], offset, delta=.5)
+                self.assertAlmostEqual(result['symbol_clock_hz'], clock, delta=1)
+
+    def test_lrpt_rejects_two_unmodulated_cw_lines(self):
+        rate = 288000
+        t = np.arange(rate) / rate
+        iq = np.exp(2j * np.pi * -36000 * t) + np.exp(2j * np.pi * 36000 * t)
+        self.assertEqual(estimate_paired(iq, rate, 18000),
+                         {'accepted': False, 'reason': 'dominant_unmodulated_tone'})
+
+    def test_cadu_deduplication_and_payload_conflict(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'frames.cadu'
+            original = bytes.fromhex('1acffc1d') + bytes(1020)
+            path.write_bytes(original + original)
+            self.assertEqual(list(frames(path).values()), [original])
+            conflict = bytearray(original)
+            conflict[895] = 1
+            path.write_bytes(original + conflict)
+            with self.assertRaisesRegex(ValueError, 'Conflicting'):
+                frames(path)
+
+    def test_lrpt_fallback_product_arguments_timeout_and_wrap(self):
+        def cadu(header, counter):
+            return bytes.fromhex('1acffc1d') + header.to_bytes(2, 'big') + counter.to_bytes(3, 'big') + bytes(1015)
+
+        before, at, after = [cadu(1, counter) for counter in (0xffffff, 0, 1)]
+        other_before, other_after = [cadu(2, counter) for counter in (0xffffff, 0)]
+        for outcome in ('72k', '80k-product-timeout', 'zero'):
+            with self.subTest(outcome=outcome), TemporaryDirectory() as directory:
+                root = Path(directory)
+                live = root / 'live-doppler'
+                live.mkdir()
+                (live / 'corrected.cf32').write_bytes(bytes(16))
+                (root / 'recording.json').write_text(json.dumps(dict(
+                    status='completed', settings_restored=True, compare_constant_cfo=True,
+                    live_doppler=dict(status='completed', covers_all_recorded_samples=True,
+                                      file_sizes_match=True, output_sample_rate_hz=288000,
+                                      output_samples_per_branch=2, fir_passband_hz=100000))))
+                calls = []
+
+                def run(command, **kwargs):
+                    calls.append(command)
+                    _, pipeline, mode, _, output, *_ = command
+                    if mode == 'cadu':
+                        if outcome == '80k-product-timeout':
+                            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+                    else:
+                        swap = command[command.index('--iq_swap') + 1] == 'true'
+                        accepted_pipeline = {'72k': 'meteor_m2-x_lrpt',
+                                             '80k-product-timeout': 'meteor_m2-x_lrpt_80k'}.get(outcome)
+                        if pipeline == accepted_pipeline:
+                            folder = Path(output)
+                            folder.mkdir()
+                            (folder / (pipeline + '.cadu')).write_bytes(
+                                before + at + other_after if swap else at + other_before + after)
+                    return subprocess.CompletedProcess(command, 0)
+
+                with patch('decode_meteor.subprocess.run', side_effect=run):
+                    report = recover(root)
+                    with self.assertRaisesRegex(FileExistsError, 'fresh recording copy'):
+                        recover(root)
+                expected_rates = [72000, 72000] + ([80000, 80000] if outcome != '72k' else [])
+                baseband = [call for call in calls if call[2] == 'baseband']
+                self.assertEqual([(call[1], call[call.index('--symbolrate') + 1],
+                                   call[call.index('--iq_swap') + 1]) for call in baseband],
+                                 [('meteor_m2-x_lrpt_80k' if rate == 80000 else 'meteor_m2-x_lrpt',
+                                   str(rate), str(bool(iq % 2)).lower()) for iq, rate in enumerate(expected_rates)])
+                self.assertIsNone(report['estimated_symbol_rate'])
+                self.assertIsNone(report['target'])
+                self.assertEqual(report['failed_runs'], [])
+                merged = Path(report['merged_cadu']).read_bytes()
+                if outcome == 'zero':
+                    self.assertEqual(len(calls), len(baseband))
+                    self.assertIsNone(report['symbol_rate'])
+                    self.assertEqual(report['unique_valid_cadu'], 0)
+                    self.assertEqual(merged, b'')
+                else:
+                    self.assertEqual(calls[-1][1:4], [baseband[-1][1], 'cadu', report['merged_cadu']])
+                    self.assertEqual(report['symbol_rate'], expected_rates[-1])
+                    self.assertEqual(report['unique_valid_cadu'], 5)
+                    self.assertEqual(merged, before + at + after + other_before + other_after)
+                timeout = outcome == '80k-product-timeout'
+                self.assertEqual(report['product_timeout'], timeout)
+                self.assertEqual(report['status'], 'partial' if timeout else 'completed')
+                self.assertEqual(json.loads((root / 'meteor-recovery/comparison.json').read_text()), report)

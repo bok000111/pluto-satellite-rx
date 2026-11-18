@@ -1,6 +1,6 @@
 # PlutoSDR 위성 수신 분석
 
-PlutoSDR로 받은 위성 IQ를 분석하는 Python 스크립트입니다. 저장된 신호를 이용해 도플러 보정 전후를 비교하고, RS-44 비콘의 CW 오디오를 추출합니다. 실행에는 직접 준비한 녹음 파일을 사용합니다.
+PlutoSDR로 받은 위성 IQ를 분석하는 Python 스크립트입니다. 저장된 신호를 이용해 도플러 보정 전후를 비교하고, RS-44 비콘의 CW 오디오를 추출하고, METEOR LRPT 신호를 후처리합니다. 실행에는 직접 준비한 녹음 파일을 사용합니다.
 
 ## 저장된 수신 결과 분석
 
@@ -22,13 +22,25 @@ uv run --locked python scripts/analyze_rs44.py path/to/recording --prediction pa
 
 예측 도플러에 주파수 편차를 더해 관측 피크와 비교하고, 녹음 폴더에 추정값과 그래프, `cw-candidate.wav`를 저장합니다. PSD의 full scale은 2048 ADC counts입니다. 호출부호는 추출한 오디오에서 별도로 확인합니다.
 
+## METEOR LRPT 후처리
+
+별도로 설치한 [SatDump CLI](https://github.com/SatDump/SatDump/tree/1.2.2#cli-version)를 `PATH`에 두거나 `--satdump`로 실행 파일을 지정합니다. 이 스크립트는 `meteor_m2-x_lrpt`와 `meteor_m2-x_lrpt_80k` 파이프라인을 사용합니다.
+
+```sh
+uv run --locked python scripts/decode_meteor.py path/to/recording
+```
+
+`live-doppler/corrected.cf32`와 `recording.json`이 필요합니다. 기록 메타데이터의 `status`와 `live_doppler.status`는 `completed`여야 하고, `settings_restored`, `live_doppler.covers_all_recorded_samples`, `live_doppler.file_sizes_match`가 참이어야 합니다. `live_doppler`에는 `output_sample_rate_hz`, `output_samples_per_branch`, `fir_passband_hz`도 필요합니다. 기본 필터를 쓰려면 보존한 한쪽 통과 대역이 80 kHz보다 커야 합니다. `meteor-recovery/`가 이미 있으면 실행을 거부하므로 다시 분석할 때는 새 입력 사본을 사용합니다.
+
+잔여 반송파 보정과 채널 필터를 적용한 분기를 비교합니다. 심볼레이트가 미확정이면 72 ksym/s를 먼저 시도하고 유효 CADU가 0개일 때 80 ksym/s를 시도합니다. Reed-Solomon 검사를 통과한 CADU를 중복 제거해 `meteor-recovery/merged-rs-accepted.cadu`에 합칩니다. CADU가 검출되면 같은 심볼레이트의 SatDump 파이프라인으로 `merged-products/`에 후처리를 실행하며, 영상은 생성되지 않을 수 있습니다. 실행 오류가 없으면 유효 CADU가 0개여도 `completed`로 기록합니다. 분기별 결과와 수용된 CADU 수는 `meteor-recovery/comparison.json`에 기록됩니다.
+
 ## 테스트
 
 ```sh
 PYTHONPATH=scripts uv run --locked python -m unittest discover -s tests
 ```
 
-테스트는 생성한 신호로 도플러 추정과 CW 오디오 추출를 확인합니다.
+테스트는 생성한 신호로 도플러 추정, 채널 필터, 반송파 추정과 CADU 중복 처리를 확인합니다.
 
 ## 라이선스
 

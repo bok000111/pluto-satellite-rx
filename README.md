@@ -8,13 +8,7 @@ PlutoSDR로 받은 위성 IQ를 분석한 기록과 Python 스크립트입니다
 
 ![AO-123 도플러 보정 전후 워터폴](docs/observations/ao123/02-doppler-comparison.png)
 
-## 분석 스크립트
-
-- `analyze_live_doppler.py`는 도플러 보정 전후의 스펙트럼과 워터폴을 비교합니다.
-- `analyze_rs44.py`는 RS-44 비콘의 예측 도플러를 관측 피크와 비교하고 CW 오디오를 추출합니다.
-- `decode_meteor.py`는 METEOR LRPT 신호를 SatDump로 후처리합니다.
-
-[실행 방법과 입력 형식](docs/usage.md)
+[수신과 분석 실행 방법](docs/usage.md)
 
 ## 라이선스
 

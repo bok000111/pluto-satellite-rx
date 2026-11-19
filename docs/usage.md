@@ -2,28 +2,49 @@
 
 ## 준비와 패스 예측
 
-Python 3.13과 [uv](https://docs.astral.sh/uv/)가 필요합니다. `config.example.toml`을 복사하고 `[observer]`의 위도, 경도, 고도와 `[pluto]`의 URI, 선택적 serial 주석을 실제 값으로 채웁니다. `config/local.toml`은 git에서 제외됩니다.
+필수: Python 3.13, [uv](https://docs.astral.sh/uv/). 장비 수신에는 libiio 필요.
+
+`config.example.toml`을 복사한 뒤 실제 값 입력.
+
+- `[observer]`: 위도, 경도, 고도
+- `[pluto]`: URI, serial 주석(선택)
+- `config/local.toml`: git 추적 제외
 
 ```sh
 mkdir -p config
 cp config.example.toml config/local.toml
 ```
 
-장비 수신에는 libiio가 필요합니다. 수신 명령에는 `uv run --locked --extra receive`를, 예측과 저장된 결과 분석에는 `uv run --locked`를 사용합니다.
+- 수신: `uv run --locked --extra receive`
+- 예측, 저장된 결과 분석: `uv run --locked`
 
-이름 행이 선택적으로 포함된 2행 또는 3행 TLE 파일로 예측합니다. 시작과 끝은 시간대가 포함된 ISO 8601이며, 수신에 쓸 예측 창은 녹음 종료보다 2초 이상 뒤까지 포함해야 합니다.
+패스 예측 입력:
+
+- TLE 파일: 2행 또는 3행(이름 행 선택)
+- 시작과 끝: 시간대가 포함된 ISO 8601
+- 수신용 예측 창: 녹음 종료보다 2초 이상 뒤까지 포함
 
 ```sh
 uv run --locked python scripts/predict_pass.py --tle path/to/tle.txt --start 2026-11-18T00:00:00Z --end 2026-11-19T00:00:00Z --frequency 435400000 --output path/to/prediction.json
 ```
 
-`--min-elevation`의 기본값은 10도이고 `--config`의 기본값은 `config/local.toml`입니다. JSON에는 `reference_frequency_hz`, Unix 초 배열 `time_utc_unix`, Hz 배열 `doppler_hz`와 `passes`가 있습니다. Doppler는 2초 간격으로 표본화하며 마지막 끝점도 포함합니다. 각 pass에는 `aos_utc`, `peak_utc`, `los_utc`, `peak_elevation_deg`가 있습니다.
+기본값: `--min-elevation` 10도, `--config`에 `config/local.toml`.
+
+예측 JSON:
+
+- `reference_frequency_hz`
+- `time_utc_unix`(Unix 초 배열), `doppler_hz`(Hz 배열): 2초 간격, 마지막 끝점 포함
+- `passes`: 각 pass에 `aos_utc`, `peak_utc`, `los_utc`, `peak_elevation_deg`
 
 ## 수신
 
-`--plan`에 JSON 계획을 지정합니다. `--config` 기본값은 `config/local.toml`이며 `output`과 `prediction`의 상대 경로는 계획 파일을 기준으로 합니다. 주파수, 대역폭, 표본율과 cutoff는 Hz, `seconds`는 초이며 IQ는 interleaved little-endian int16 I/Q 표본으로 저장됩니다. 이미 존재하는 출력은 덮어쓰지 않습니다.
+- `--plan`: JSON 계획. `output`과 `prediction`의 상대 경로는 계획 파일 기준.
+- `--config` 기본값: `config/local.toml`
+- 단위: 주파수, 대역폭, 표본율, cutoff는 Hz. `seconds`는 초.
+- IQ 저장 형식: interleaved little-endian int16 I/Q 표본
+- 기존 출력 덮어쓰기 없음.
 
-즉시 raw-only 수신 계획 예시입니다.
+즉시 raw-only 수신 계획
 
 ```json
 {
@@ -36,7 +57,9 @@ uv run --locked python scripts/predict_pass.py --tle path/to/tle.txt --start 202
 }
 ```
 
-예약 수신은 `seconds` 대신 시간대가 포함된 `record_start`와 `record_end`를 사용합니다. 시작 15분 전부터 종료 전까지 실행할 수 있습니다. 다음은 예측 JSON을 사용하는 단일 paired 채널 예시입니다.
+예약 수신은 `seconds` 대신 `record_start`와 `record_end` 사용(시간대 포함). 실행 가능 시점은 시작 15분 전부터 종료 전까지.
+
+예측 JSON과 단일 paired 채널을 쓰는 예약 수신 계획
 
 ```json
 {
@@ -58,27 +81,42 @@ uv run --locked python scripts/predict_pass.py --tle path/to/tle.txt --start 202
 uv run --locked --extra receive python scripts/record_pass.py --plan path/to/plan.json
 ```
 
-채널은 입력 표본율을 출력 표본율로 정수 배 decimation해야 하며 선택적으로 `cfo_hz`를 지정할 수 있습니다. 채널이 하나면 루트에 `live_doppler` 결과가 있고, 여러 개면 고유한 `key`마다 `targets/<key>` view와 루트 `live_doppler_channels`가 만들어집니다. `gain_control_mode`는 선택 사항입니다. 수신은 최대 15분입니다.
+- 채널: 입력 표본율에서 출력 표본율로 정수 배 decimation. `cfo_hz` 선택.
+- 채널 하나: 루트에 `live_doppler` 결과
+- 채널 여러 개: 고유한 `key`마다 `targets/<key>` view, 루트에 `live_doppler_channels`
+- `gain_control_mode`: 선택
+- 수신: 최대 15분
 
 ## 저장된 수신 결과 분석
 
-`recording.json`, `iq.cs16`, `live-doppler/uncorrected.cf32`, `live-doppler/corrected.cf32`가 있는 녹음 폴더를 지정합니다. IQ 형식은 각각 little-endian int16 I/Q 쌍과 little-endian complex64입니다.
+녹음 폴더에 필요한 파일:
+
+- `recording.json`
+- `iq.cs16`: little-endian int16 I/Q 쌍
+- `live-doppler/uncorrected.cf32`, `live-doppler/corrected.cf32`: little-endian complex64
 
 ```sh
 uv run --locked python scripts/analyze_live_doppler.py path/to/recording
 ```
 
-`recording.json`의 `sample_count`, `bytes_written`, `target`과 `live_doppler`의 `output_sample_rate_hz`, `output_samples_per_branch`, `processed_samples`, `rejected_samples`, `status`, `errors`를 읽습니다. `residual_correction.status`가 `completed`이면 `residual-corrected.cf32`도 비교합니다.
+읽는 메타데이터:
+
+- `recording.json`: `sample_count`, `bytes_written`, `target`
+- `live_doppler`: `output_sample_rate_hz`, `output_samples_per_branch`, `processed_samples`, `rejected_samples`, `status`, `errors`
+
+`residual_correction.status`가 `completed`이면 `residual-corrected.cf32`도 비교.
 
 ## AO-123 후보와 NFM 분석
 
-먼저 위의 `analyze_live_doppler.py`를 실행해 스펙트럼을 만든 뒤 후보를 대조합니다.
+`analyze_live_doppler.py`로 스펙트럼 생성 후 후보 대조.
 
 ```sh
 uv run --locked python scripts/analyze_ao123.py --recording path/to/recording --prediction path/to/prediction.json --output path/to/ao-analysis
 ```
 
-01부터 03까지의 그림과 `candidate-report.json`이 생성됩니다. 04에는 보정 전후 전체 WAV가 모두 필요합니다. 아래는 각 분기에서 WAV를 만들고 함께 넘기는 예시입니다.
+출력: 그림 01–03, `candidate-report.json`.
+
+그림 04: 보정 전후 전체 WAV 필요. 각 분기에서 WAV를 만든 뒤 함께 전달.
 
 ```sh
 uv run --locked python scripts/demod_nfm.py --recording path/to/recording --output path/to/nfm-before --branch uncorrected --offset-hz 0
@@ -86,9 +124,17 @@ uv run --locked python scripts/demod_nfm.py --recording path/to/recording --outp
 uv run --locked python scripts/analyze_ao123.py --recording path/to/recording --prediction path/to/prediction.json --output path/to/ao-with-audio --before-wav path/to/nfm-before/uncorrected-nfm.wav --after-wav path/to/nfm-after/corrected-nfm.wav
 ```
 
-05와 06은 시간대가 포함된 ISO 시각으로 구성한 비어 있지 않은 windows JSON 배열을 사용합니다. `strong_start`부터 `strong_end`까지는 `start`와 `end` 사이의 0.05초 이상 구간이며, 각 창 양끝에 실제 IQ 0.5초가 더 있어야 합니다.
+그림 05와 06의 windows JSON:
 
-06의 시작을 정하려면 배열에서 창 하나에만 `example_start`를 지정합니다. 이 시각부터 1초가 해당 창 안에 들어와야 합니다. 생략하면 strong 구간의 RF 피크 대비가 가장 높은 창에서 `strong_start`부터 최대 1초를 사용합니다. `example_rf_peak_excess_db`는 선택된 창의 strong 구간에서 측정한 값입니다.
+- 비어 있지 않은 배열. 시각은 시간대를 포함한 ISO 형식.
+- `strong_start`부터 `strong_end`까지는 `start`와 `end` 사이의 0.05초 이상 구간.
+- 각 창 양끝에 실제 IQ 0.5초씩 필요.
+
+그림 06 시작 시각:
+
+- `example_start`는 배열의 창 하나에만 지정. 지정 시각부터 1초가 해당 창 안에 포함되어야 함.
+- 생략 시 strong 구간의 RF 피크 대비가 가장 높은 창에서 `strong_start`부터 최대 1초 사용.
+- `example_rf_peak_excess_db`: 선택한 창의 strong 구간에서 측정한 값.
 
 ```json
 [
@@ -100,7 +146,9 @@ uv run --locked python scripts/analyze_ao123.py --recording path/to/recording --
 uv run --locked python scripts/demod_nfm.py --recording path/to/recording --output path/to/nfm-windows --offset-hz 208 --windows path/to/windows.json
 ```
 
-입력은 100 kS/s paired IQ이며 기본 분기는 `corrected`입니다. `--offset-hz`는 선택한 분기에 적용할 잔류 오프셋입니다.
+- 입력: 100 kS/s paired IQ
+- 기본 분기: `corrected`
+- `--offset-hz`: 선택한 분기에 적용할 잔류 오프셋
 
 ## RS-44 CW 비콘 분석
 
@@ -108,17 +156,27 @@ uv run --locked python scripts/demod_nfm.py --recording path/to/recording --outp
 uv run --locked python scripts/analyze_rs44.py path/to/recording --prediction path/to/prediction.json
 ```
 
-녹음 폴더에 `iq.cs16`과 `recording.json`이 필요합니다. 메타데이터에는 `sample_count`, `sample_rate_hz`, `center_frequency_hz`, 시간대가 포함된 ISO 8601 `actual_start_utc`를 넣습니다. 예측 JSON에는 `reference_frequency_hz`에 435605000을, `time_utc_unix`와 `doppler_hz`에 같은 길이의 시간순 배열을 넣습니다. 예측 구간은 녹음을 덮어야 합니다.
+- 녹음 폴더: `iq.cs16`, `recording.json`
+- 메타데이터: `sample_count`, `sample_rate_hz`, `center_frequency_hz`, `actual_start_utc`(시간대를 포함한 ISO 8601)
+- 예측 JSON: `reference_frequency_hz`에 435605000, `time_utc_unix`와 `doppler_hz`에 같은 길이의 시간순 배열.
+- 예측 구간: 전체 녹음 구간 포함.
 
 ## METEOR LRPT 후처리
 
-별도로 설치한 [SatDump CLI](https://github.com/SatDump/SatDump/tree/1.2.2#cli-version)를 `PATH`에 두거나 `--satdump`로 실행 파일을 지정합니다. 이 스크립트는 `meteor_m2-x_lrpt`와 `meteor_m2-x_lrpt_80k` 파이프라인을 사용합니다.
+별도 설치: [SatDump CLI](https://github.com/SatDump/SatDump/tree/1.2.2#cli-version). `PATH`에 두거나 `--satdump`로 실행 파일 지정.
+
+파이프라인: `meteor_m2-x_lrpt`, `meteor_m2-x_lrpt_80k`.
 
 ```sh
 uv run --locked python scripts/decode_meteor.py path/to/recording
 ```
 
-`live-doppler/corrected.cf32`와 `recording.json`이 필요합니다. 기록 메타데이터의 `status`와 `live_doppler.status`는 `completed`여야 하고, `settings_restored`, `live_doppler.covers_all_recorded_samples`, `live_doppler.file_sizes_match`가 참이어야 합니다. `live_doppler`에는 `output_sample_rate_hz`, `output_samples_per_branch`, `fir_passband_hz`도 필요합니다. 기본 필터를 쓰려면 보존한 한쪽 통과 대역이 80 kHz보다 커야 합니다. `meteor-recovery/`가 이미 있으면 실행을 거부하므로 다시 분석할 때는 새 입력 사본을 사용합니다.
+- 입력: `live-doppler/corrected.cf32`, `recording.json`
+- `completed` 필수: `status`, `live_doppler.status`
+- 참 필수: `settings_restored`, `live_doppler.covers_all_recorded_samples`, `live_doppler.file_sizes_match`
+- `live_doppler` 필수 필드: `output_sample_rate_hz`, `output_samples_per_branch`, `fir_passband_hz`
+- 기본 필터: 보존한 한쪽 통과 대역이 80 kHz 초과.
+- `meteor-recovery/`가 이미 있으면 실행 불가. 재분석은 새 입력 사본 사용.
 
 ## 테스트
 

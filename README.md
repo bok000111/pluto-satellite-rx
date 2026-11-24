@@ -4,6 +4,7 @@ PlutoSDR로 받은 위성 IQ를 분석한 기록과 Python 스크립트.
 
 ## 수신 기록
 
+- 2026-11-24 METEOR-M2-3 오전 (137.900 MHz). LRPT 유효 CADU 1,104개, MSU-MR 영상 복원. [전체 기록](docs/observations/2026-11-24-meteor3-morning.md)
 - 2026-11-24 DJIBOUTI-1B (401.800 MHz). AX.25 프레임 2개 FCS 통과, 최대 SNR 14.18 dB. [전체 기록](docs/observations/2026-11-24-djibouti1b.md)
 - 2026-11-19 RS-44 (435.605 MHz). CW 비콘 ID `RS44` 두 번 확인, FT4 43건 복조. [전체 기록](docs/observations/2026-11-19-rs44.md)
 - 2026-11-18 AO-123 (435.400 MHz). 도플러 보정 뒤 후보의 주파수 변화 폭 18.52 kHz에서 146 Hz로 감소. [전체 기록](docs/observations/2026-11-18-ao123.md)
